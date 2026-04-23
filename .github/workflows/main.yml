@@ -71,7 +71,13 @@ jobs:
                   try:
                       response = requests.get(BASE_URL, params=params, headers=HEADERS, timeout=20)
                       
-                      if response.status_code != 200 or not response.json().get("data"):
+                      try:
+                          res_json = response.json()
+                          has_data = bool(res_json.get("data"))
+                      except:
+                          has_data = False
+
+                      if response.status_code != 200 or not has_data:
                           params["date"] = ""
                           response = requests.get(BASE_URL, params=params, headers=HEADERS, timeout=20)
 
@@ -96,9 +102,10 @@ jobs:
                           time.sleep(0.5)
                       else:
                           print(f"\n❌ Error {response.status_code}")
+                          print(f"🛑 Debug Response: {response.text[:1000]}")
                           break
                   except Exception as e:
-                      print(f"\n⚠️ Error: {e}")
+                      print(f"\n⚠️ Exception Error: {e}")
                       break
 
           final_data = list(all_channels.values())
@@ -121,12 +128,18 @@ jobs:
               tree = ET.ElementTree(root)
               tree.write("tata_data.xml", encoding="utf-8", xml_declaration=True)
               print(f"\n🎉 Successfully saved {len(final_data)} channels to JSON & XML!")
+          else:
+              print("\n⚠️ No data was fetched. Skipping file creation.")
           EOF
 
       - name: Commit and Push files
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add tata_data.json tata_data.xml
-          git commit -m "Automated daily EPG update" || echo "No changes to commit"
-          git push
+          if [ -f "tata_data.xml" ] && [ -f "tata_data.json" ]; then
+            git add tata_data.json tata_data.xml
+            git commit -m "Automated daily EPG update" || echo "No changes to commit"
+            git push
+          else
+            echo "⚠️ No data files found. Skipping commit."
+          fi
