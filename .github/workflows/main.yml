@@ -34,11 +34,7 @@ jobs:
           import time
 
           BASE_URL = os.getenv('BASE_URL')
-          try:
-              HEADERS = json.loads(os.getenv('HEADERS_JSON'))
-          except Exception as e:
-              print(f'Header JSON Error: {e}')
-              exit(1)
+          HEADERS = json.loads(os.getenv('HEADERS_JSON'))
 
           LIMIT = 20
           DAYS_TO_FETCH = 1
@@ -46,17 +42,26 @@ jobs:
           def fetch_data():
               all_channels = {}
               for i in range(DAYS_TO_FETCH):
+                  # API date format fixing
                   current_date = (datetime.now() + timedelta(days=i)).strftime('%Y-%m-%d')
-                  api_date = f'{current_date}T00:00:00.000+00:00'
+                  api_date = f'{current_date}T00:00:00.000Z' 
+                  
                   print(f'Testing for Date: {current_date}')
                   
                   offset = 0
                   total = 1 
                   while offset < total:
-                      params = {'date': api_date, 'limit': LIMIT, 'offset': offset}
+                      # Parameters as per successful web requests
+                      params = {
+                          'date': api_date,
+                          'languageFilters': '',
+                          'genreFilters': '',
+                          'limit': str(LIMIT),
+                          'offset': str(offset)
+                      }
+                      
                       try:
                           response = requests.get(BASE_URL, params=params, headers=HEADERS, timeout=30)
-                          print(f'Status: {response.status_code} | Offset: {offset}')
                           
                           if response.status_code == 200:
                               result = response.json()
@@ -64,30 +69,30 @@ jobs:
                               total = data_part.get('total', 0)
                               channels = data_part.get('channelList', [])
                               
-                              if not channels:
-                                  print('No channels found in this offset.')
-                                  break
+                              if not channels: break
                                   
                               for ch in channels:
                                   cid = ch['id']
                                   if cid not in all_channels:
                                       all_channels[cid] = ch
                                   else:
-                                      all_channels[cid]['epg'].extend(ch.get('epg', []))
+                                      all_channels[cid].setdefault('epg', []).extend(ch.get('epg', []))
+                              
+                              print(f'Offset: {offset} Success | Total: {total}', end='\r')
                               offset += LIMIT
-                              time.sleep(1)
+                              time.sleep(0.5)
                           else:
-                              print(f'API Error: {response.text}')
+                              print(f'\nAPI Error: {response.status_code} | Msg: {response.text}')
                               break
                       except Exception as e:
-                          print(f'Request Failed: {e}')
+                          print(f'\nRequest Failed: {e}')
                           break
               return list(all_channels.values())
 
           data = fetch_data()
-          print(f'Total Channels Fetched: {len(data)}')
 
           if data:
+              print(f'\nTotal Channels: {len(data)}')
               root = ET.Element('tv')
               for ch in data:
                   c_elem = ET.SubElement(root, 'channel', id=str(ch['id']))
@@ -101,11 +106,10 @@ jobs:
               
               tree = ET.ElementTree(root)
               tree.write('tata_data.xml', encoding='utf-8', xml_declaration=True)
-              
               with open('tata_data.json', 'w', encoding='utf-8') as f:
                   json.dump(data, f, indent=4, ensure_ascii=False)
           else:
-              print('Critical: No data fetched, files not updated.')
+              print('\nNo data found to save.')
           "
 
       - name: Commit and Push
@@ -113,5 +117,5 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add .
-          git commit -m "Update EPG: $(date)" || echo "No changes to commit"
+          git commit -m "Update $(date)" || echo "No changes"
           git push
