@@ -90,9 +90,5 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add -A
-          if git diff --quiet && git diff --staged --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Update EPG: $(date)"
-            git push
-          fi
+          git commit -m "Update $(date)" || echo "No changes to commit"
+          git push
