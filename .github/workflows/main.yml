@@ -89,6 +89,10 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add tata_data.json tata_data.xml
-          git commit -m "Update $(date)" || exit 0
-          git push
+          git add -A
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update EPG: $(date)"
+            git push
+          fi
