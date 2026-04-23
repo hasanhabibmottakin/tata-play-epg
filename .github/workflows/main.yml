@@ -1,121 +1,132 @@
-name: Update EPG Data
+name: Daily Tata Play EPG Fetch
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 jobs:
-  build:
+  fetch-and-update:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install required library
         run: pip install requests
 
-      - name: Run Scraper
+      - name: Fetch API and Generate Data
         env:
           BASE_URL: ${{ secrets.BASE_URL }}
           HEADERS_JSON: ${{ secrets.HEADERS_JSON }}
         run: |
-          python -c "
+          python - << 'EOF'
           import requests
           import json
-          import os
           import xml.etree.ElementTree as ET
           from datetime import datetime, timedelta
           import time
+          import os
 
-          BASE_URL = os.getenv('BASE_URL')
-          HEADERS = json.loads(os.getenv('HEADERS_JSON'))
+          BASE_URL = os.environ.get("BASE_URL")
+          headers_env = os.environ.get("HEADERS_JSON")
+
+          if not BASE_URL or not headers_env:
+              print("❌ Error: Missing Secrets")
+              exit(1)
+
+          try:
+              HEADERS = json.loads(headers_env)
+          except json.JSONDecodeError:
+              print("❌ Error: Invalid JSON")
+              exit(1)
 
           LIMIT = 20
-          DAYS_TO_FETCH = 1
+          DAYS_TO_FETCH = 4
+          all_channels = {}
 
-          def fetch_data():
-              all_channels = {}
-              for i in range(DAYS_TO_FETCH):
-                  # API date format fixing
-                  current_date = (datetime.now() + timedelta(days=i)).strftime('%Y-%m-%d')
-                  api_date = f'{current_date}T00:00:00.000Z' 
-                  
-                  print(f'Testing for Date: {current_date}')
-                  
-                  offset = 0
-                  total = 1 
-                  while offset < total:
-                      # Parameters as per successful web requests
-                      params = {
-                          'date': api_date,
-                          'languageFilters': '',
-                          'genreFilters': '',
-                          'limit': str(LIMIT),
-                          'offset': str(offset)
-                      }
-                      
-                      try:
-                          response = requests.get(BASE_URL, params=params, headers=HEADERS, timeout=30)
-                          
-                          if response.status_code == 200:
-                              result = response.json()
-                              data_part = result.get('data', {})
-                              total = data_part.get('total', 0)
-                              channels = data_part.get('channelList', [])
-                              
-                              if not channels: break
-                                  
-                              for ch in channels:
-                                  cid = ch['id']
-                                  if cid not in all_channels:
-                                      all_channels[cid] = ch
-                                  else:
-                                      all_channels[cid].setdefault('epg', []).extend(ch.get('epg', []))
-                              
-                              print(f'Offset: {offset} Success | Total: {total}', end='\r')
-                              offset += LIMIT
-                              time.sleep(0.5)
-                          else:
-                              print(f'\nAPI Error: {response.status_code} | Msg: {response.text}')
-                              break
-                      except Exception as e:
-                          print(f'\nRequest Failed: {e}')
-                          break
-              return list(all_channels.values())
-
-          data = fetch_data()
-
-          if data:
-              print(f'\nTotal Channels: {len(data)}')
-              root = ET.Element('tv')
-              for ch in data:
-                  c_elem = ET.SubElement(root, 'channel', id=str(ch['id']))
-                  ET.SubElement(c_elem, 'display-name').text = ch.get('title')
-                  for e in ch.get('epg', []):
-                      p_elem = ET.SubElement(root, 'programme', channel=str(ch['id']))
-                      p_elem.set('start', str(e.get('startTime')))
-                      p_elem.set('stop', str(e.get('endTime')))
-                      ET.SubElement(p_elem, 'title').text = e.get('title')
-                      ET.SubElement(p_elem, 'desc').text = e.get('desc')
+          for i in range(DAYS_TO_FETCH):
+              current_date = (datetime.now() + timedelta(days=i)).strftime('%Y-%m-%d')
+              api_date = f"{current_date}T00:00:00.000+00:00"
+              print(f"\n📡 Fetching for Date: {current_date}")
               
-              tree = ET.ElementTree(root)
-              tree.write('tata_data.xml', encoding='utf-8', xml_declaration=True)
-              with open('tata_data.json', 'w', encoding='utf-8') as f:
-                  json.dump(data, f, indent=4, ensure_ascii=False)
-          else:
-              print('\nNo data found to save.')
-          "
+              offset = 0
+              total = 1
 
-      - name: Commit and Push
+              while offset < total:
+                  params = {
+                      "date": api_date,
+                      "languageFilters": "",
+                      "genreFilters": "",
+                      "limit": LIMIT,
+                      "offset": offset
+                  }
+
+                  try:
+                      response = requests.get(BASE_URL, params=params, headers=HEADERS, timeout=20)
+                      
+                      if response.status_code != 200 or not response.json().get("data"):
+                          params["date"] = ""
+                          response = requests.get(BASE_URL, params=params, headers=HEADERS, timeout=20)
+
+                      if response.status_code == 200:
+                          result = response.json()
+                          data_part = result.get("data", {})
+                          total = data_part.get("total", 0)
+                          channels = data_part.get("channelList", [])
+
+                          if not channels:
+                              break
+
+                          for ch in channels:
+                              cid = ch['id']
+                              if cid not in all_channels:
+                                  all_channels[cid] = ch
+                              else:
+                                  all_channels[cid]['epg'].extend(ch.get('epg', []))
+
+                          print(f"✅ Offset {offset}/{total} Done...", end="\r")
+                          offset += LIMIT
+                          time.sleep(0.5)
+                      else:
+                          print(f"\n❌ Error {response.status_code}")
+                          break
+                  except Exception as e:
+                      print(f"\n⚠️ Error: {e}")
+                      break
+
+          final_data = list(all_channels.values())
+
+          if final_data:
+              with open("tata_data.json", "w", encoding="utf-8") as f:
+                  json.dump(final_data, f, indent=4, ensure_ascii=False)
+              
+              root = ET.Element("tv")
+              for ch in final_data:
+                  c_elem = ET.SubElement(root, "channel", id=str(ch['id']))
+                  ET.SubElement(c_elem, "display-name").text = ch.get('title')
+                  for e in ch.get('epg', []):
+                      p_elem = ET.SubElement(root, "programme", channel=str(ch['id']))
+                      p_elem.set("start", str(e.get('startTime')))
+                      p_elem.set("stop", str(e.get('endTime')))
+                      ET.SubElement(p_elem, "title").text = e.get('title')
+                      ET.SubElement(p_elem, "desc").text = str(e.get('desc'))
+
+              tree = ET.ElementTree(root)
+              tree.write("tata_data.xml", encoding="utf-8", xml_declaration=True)
+              print(f"\n🎉 Successfully saved {len(final_data)} channels to JSON & XML!")
+          EOF
+
+      - name: Commit and Push files
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add .
-          git commit -m "Update $(date)" || echo "No changes"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add tata_data.json tata_data.xml
+          git commit -m "Automated daily EPG update" || echo "No changes to commit"
           git push
